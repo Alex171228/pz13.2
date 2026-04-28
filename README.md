@@ -1,169 +1,244 @@
-# Практическое задание 10
+# Практическое задание 11
 ## Шишков А.Д. ЭФМО-02-22
 ## Тема
-Горизонтальное масштабирование: балансировка нагрузки (NGINX).
+Создание GraphQL API с использованием gqlgen. Запросы и мутации.
 
 ## Цель
-Освоить подход к горизонтальному масштабированию backend-приложения: несколько экземпляров сервиса tasks, входящий HTTP через NGINX как load balancer, health-проверки и демонстрация распределения запросов.
+Освоить разработку GraphQL API на Go с использованием библиотеки gqlgen, определить GraphQL-схему, реализовать резолверы для операций CRUD, интегрировать GraphQL в существующий сервис tasks и проверить работу через Playground.
 
 ---
 
-## 1. Горизонтальное и вертикальное масштабирование
+## 1. Что такое GraphQL
 
-**Вертикальное** — увеличение ресурсов одного узла (CPU, RAM, диск).
+**GraphQL** — язык запросов к API и среда выполнения, позволяющая клиенту точно указать, какие данные ему нужны. В отличие от REST, где каждый ресурс — отдельный endpoint, в GraphQL один endpoint (`/query`) принимает все запросы.
 
-**Горизонтальное** — добавление **одинаковых** экземпляров приложения (tasks-1, tasks-2, tasks-3). Клиент обращается к **одному адресу** (NGINX), балансировщик направляет запросы на доступные backend’ы.
-
-Преимущества горизонтального масштабирования: отказоустойчивость, рост пропускной способности без «потолка» одной машины.
-
----
-
-## 2. Роль load balancer и NGINX
-
-**Load balancer** распределяет входящие запросы по группе серверов. В работе используется **NGINX** как **reverse proxy**: принимает соединение от клиента, выбирает upstream-сервер, проксирует запрос и возвращает ответ.
+Основные преимущества:
+- Решение проблемы **over-fetching** (сервер возвращает только запрошенные поля) и **under-fetching** (один запрос вместо нескольких).
+- Единый endpoint для всех операций.
+- Строгая типизация через **схему**.
 
 ---
 
-## 3. Upstream в NGINX
+## 2. Основные концепции GraphQL
 
-**Upstream** — именованная группа backend-серверов. По умолчанию NGINX использует **round-robin**: запросы по очереди уходят на `tasks_1`, `tasks_2`, `tasks_3`.
+- **type** — описание структуры объекта (например, `Task`).
+- **input** — входной тип для передачи данных в мутации.
+- **Query** — операции **чтения** данных.
+- **Mutation** — операции **изменения** данных (создание, обновление, удаление).
+- **Resolver** — функция, которая выполняет логику для конкретного поля схемы.
 
-Для устойчивости к кратковременным сбоям заданы **`max_fails`** и **`fail_timeout`**: после нескольких неудачных попыток upstream временно исключается из ротации.
+---
 
-Файл `deploy/lb/nginx.conf` (фрагмент):
+## 3. Что такое gqlgen
 
-```nginx
-upstream tasks_backend {
-    server tasks_1:8082 max_fails=3 fail_timeout=30s;
-    server tasks_2:8082 max_fails=3 fail_timeout=30s;
-    server tasks_3:8082 max_fails=3 fail_timeout=30s;
+**gqlgen** — библиотека для Go, реализующая **schema-first** подход: разработчик описывает схему в `.graphqls`, после чего генератор создаёт типобезопасный Go-код (модели, интерфейсы резолверов). Остаётся только реализовать бизнес-логику в резолверах.
+
+---
+
+## 4. GraphQL-схема
+
+Файл `services/tasks/graph/schema.graphqls`:
+
+```graphql
+type Task {
+  id: ID!
+  title: String!
+  description: String
+  due_date: String
+  done: Boolean!
+  created_at: String
 }
 
-server {
-    listen 8080;
-    location / {
-        proxy_pass http://tasks_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Authorization $http_authorization;
-        proxy_set_header X-Request-ID $request_id;
-    }
+type Query {
+  tasks: [Task!]!
+  task(id: ID!): Task
+}
+
+type Mutation {
+  createTask(input: CreateTaskInput!): Task!
+  updateTask(id: ID!, input: UpdateTaskInput!): Task!
+  deleteTask(id: ID!): Boolean!
+}
+
+input CreateTaskInput {
+  title: String!
+  description: String
+  due_date: String
+}
+
+input UpdateTaskInput {
+  title: String
+  description: String
+  due_date: String
+  done: Boolean
 }
 ```
 
-Имена `tasks_1`, `tasks_2`, `tasks_3` — это **имена сервисов** в Docker Compose (DNS внутри сети), не `localhost` на хосте.
+---
+
+## 5. Интеграция с существующим сервисом
+
+GraphQL **встроен** в существующий сервис **tasks** (порт **8082**). REST-эндпоинты (`/v1/tasks/...`) и GraphQL (`POST /query`, `GET /` — Playground) работают **в одном процессе**, используют один `TaskService`, одну базу PostgreSQL, один кэш Redis.
+
+Резолверы вызывают методы `TaskService`:
+- `tasks` → `TaskService.GetAll()`
+- `task(id)` → `TaskService.GetByID(ctx, id)`
+- `createTask(input)` → `TaskService.Create(CreateTaskRequest{...})`
+- `updateTask(id, input)` → `TaskService.Update(ctx, id, UpdateTaskRequest{...})`
+- `deleteTask(id)` → `TaskService.Delete(ctx, id)`
+
+Endpoint `/query` защищён **JWT-авторизацией** через тот же `AuthVerifier`, что и REST.
 
 ---
 
-## 4. Stateless-сервисы
-
-При балансировке один и тот же пользователь может попасть на **разные** инстансы. Сессии **нельзя** хранить только в памяти одного процесса без общего хранилища.
-
-В проекте: данные задач в **PostgreSQL**, кэш в **Redis** — общие для всех реплик tasks, что соответствует **stateless**-модели за вычетом внешних зависимостей (БД, Redis).
-
----
-
-## 5. Идентификация инстанса: INSTANCE_ID и X-Instance-ID
-
-- Переменная окружения **`INSTANCE_ID`** задаёт имя реплики (`tasks-1`, `tasks-2`, `tasks-3`).
-- В каждом HTTP-ответе выставляется заголовок **`X-Instance-ID`** (включая `/metrics`), чтобы по логам и `curl -i` было видно, **какой инстанс** обработал запрос.
-- **`GET /health`** возвращает JSON с полями `status`, `service`, **`instance`**.
-- **`GET /whoami`** — дополнительный эндпоинт для демонстрации: `{"instance":"tasks-1"}` без авторизации.
-
-**Доп. задание, вариант 2 — логирование с `instance_id`:** в каждой строке access log при завершении запроса (`request completed`) в JSON-логе есть поле **`instance_id`** (значение совпадает с `INSTANCE_ID` реплики). Реализация: `shared/middleware/accesslog.go` — у `AccessLog` добавлены опциональные поля; в **tasks** вызывается `AccessLog(log, zap.String("instance_id", instanceID))`, сервис **auth** по-прежнему использует `AccessLog(log)` без лишних полей.
-
-Проверка: `docker compose logs -f tasks_1` (или `lb_tasks_1`) и несколько запросов через LB — в логах видно, какой инстанс обработал запрос.
-
-Файлы: `services/tasks/cmd/tasks/main.go`, `shared/middleware/accesslog.go`, `InstanceIDMiddleware` и `handler.go` в `services/tasks/internal/http/`.
-
----
-
-## 6. Структура стенда с балансировкой
+## 6. Структура файлов GraphQL
 
 ```
-deploy/lb/
-  docker-compose.yml   — db, redis, tasks_1..3, nginx
-  nginx.conf           — upstream + proxy
+services/tasks/graph/
+  schema.graphqls         — GraphQL-схема
+  resolver.go             — корневой Resolver (хранит *TaskService)
+  schema.resolvers.go     — реализация Query/Mutation
+  generated.go            — автогенерация gqlgen (не редактируется)
+  model/models_gen.go     — сгенерированные модели
+
+gqlgen.yml                — конфигурация генератора (корень репозитория)
 ```
-
-Сборка образа tasks — **корень репозитория**, как в основном compose:
-
-```yaml
-build:
-  context: ../..
-  dockerfile: services/tasks/Dockerfile
-```
-
-Снаружи публикуется только **порт 8080** (NGINX). PostgreSQL и Redis доступны только внутри сети compose (конфликта портов с `deploy/docker-compose.yml` нет).
-
-**Auth** по-прежнему на хосте: `AUTH_BASE_URL=http://host.docker.internal:8081` и `extra_hosts: host.docker.internal:host-gateway`.
 
 ---
 
 ## 7. Запуск
 
 ```bash
-cd deploy/lb
-docker compose up -d --build
-docker compose ps
+# auth на хосте (если не запущен)
+go run ./services/auth/cmd/auth
+
+# tasks с GraphQL (Postgres должен быть доступен)
+go run ./services/tasks/cmd/tasks
 ```
+
+Playground: **http://localhost:8082/**
+GraphQL endpoint: **POST http://localhost:8082/query**
 
 ---
 
-## 8. Проверки
+## 8. Проверки через Playground
 
-### Health и заголовок
+Перед выполнением мутаций и запросов добавьте в Playground заголовок авторизации (вкладка **HTTP Headers** внизу):
 
-```bash
-curl -i http://localhost:8080/health
+```json
+{
+  "Authorization": "Bearer <token>"
+}
 ```
 
-Ожидается `200`, в теле `"instance":"tasks-…"`, в заголовках **`X-Instance-ID`**.
+Токен получить: `POST http://localhost:8081/v1/auth/login` с телом `{"username":"student","password":"student"}`.
 
-![Проверка /health](docs/images/pz10_check_health.png)
+### Получить все задачи
 
-### Whoami и round-robin
-
-```bash
-for i in 1 2 3 4 5 6; do curl -s http://localhost:8080/whoami; echo; done
+```graphql
+query {
+  tasks {
+    id
+    title
+    done
+  }
+}
 ```
 
-В ответах должны чередоваться **`tasks-1`**, **`tasks-2`**, **`tasks-3`**.
+![Список задач](docs/images/pz11_tasks.png)
 
-![Round-robin /whoami](docs/images/pz10_check_whoami.png)
+### Получить задачу по ID
 
-### API с Authorization через NGINX
-
-```bash
-TOKEN=$(curl -s http://localhost:8081/v1/auth/login -H "Content-Type: application/json" \
-  -d '{"username":"student","password":"student"}' | jq -r .access_token)
-curl -i http://localhost:8080/v1/tasks -H "Authorization: Bearer $TOKEN"
+```graphql
+query GetTask($id: ID!) {
+  task(id: $id) {
+    id
+    title
+    description
+    done
+  }
+}
 ```
 
-Заголовок **`X-Instance-ID`** меняется при повторных запросах.
+Переменные:
 
-![GET /v1/tasks через балансировщик](docs/images/pz10_check_tasks.png)
-
-### Отказ одной реплики
-
-```bash
-docker compose stop tasks_1
-# несколько запросов — только tasks-2 и tasks-3
-for i in 1 2 3 4 5; do curl -sI http://localhost:8080/whoami | grep -i X-Instance-ID; done
-docker compose start tasks_1
+```json
+{
+  "id": "t_001"
+}
 ```
 
-![Отказ реплики tasks_1](docs/images/pz10_check_failover.png)
+![Задача по ID](docs/images/pz11_task_by_id.png)
 
-### Логи с `instance_id` (доп. задание)
+### Создать задачу
 
-```bash
-docker compose logs tasks_1 --tail 50
+```graphql
+mutation Create($input: CreateTaskInput!) {
+  createTask(input: $input) {
+    id
+    title
+    description
+    done
+  }
+}
 ```
 
-Несколько запросов через LB, затем в логах — **`instance_id`** в записи о завершении запроса.
+Переменные:
 
-![Логи с instance_id](docs/images/pz10_check_logs.png)
+```json
+{
+  "input": {
+    "title": "Изучить GraphQL",
+    "description": "Практическое занятие №11"
+  }
+}
+```
+
+![Создание задачи](docs/images/pz11_create.png)
+
+### Обновить задачу
+
+```graphql
+mutation Update($id: ID!, $input: UpdateTaskInput!) {
+  updateTask(id: $id, input: $input) {
+    id
+    title
+    description
+    done
+  }
+}
+```
+
+Переменные:
+
+```json
+{
+  "id": "t_001",
+  "input": {
+    "done": true
+  }
+}
+```
+
+![Обновление задачи](docs/images/pz11_update.png)
+
+### Удалить задачу
+
+```graphql
+mutation Delete($id: ID!) {
+  deleteTask(id: $id)
+}
+```
+
+Переменные:
+
+```json
+{
+  "id": "t_002"
+}
+```
+
+![Удаление задачи](docs/images/pz11_delete.png)
 
 ---
 
@@ -179,4 +254,3 @@ docker run --rm \
   -v "$(pwd)/deploy/lb/nginx.conf:/etc/nginx/nginx.conf:ro" \
   nginx:1.27-alpine nginx -t
 ```
-

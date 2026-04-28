@@ -1,5 +1,6 @@
 *.exe
 *.log
+.gocache/
 .env
 deploy/tls/certs/
 .idea/

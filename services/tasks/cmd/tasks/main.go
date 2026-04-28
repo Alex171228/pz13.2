@@ -8,10 +8,13 @@ import (
 	"syscall"
 	"time"
 
+	gqlhandler "github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"pz1.2/services/tasks/graph"
 	"pz1.2/services/tasks/internal/cache"
 	"pz1.2/services/tasks/internal/client/authclient"
 	taskshttp "pz1.2/services/tasks/internal/http"
@@ -111,6 +114,13 @@ func main() {
 	handler := taskshttp.NewHandler(taskService, authVerifier, log, instanceID)
 	handler.RegisterRoutes(mux)
 	mux.Handle("GET /metrics", promhttp.Handler())
+
+	gqlSrv := gqlhandler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{
+		Resolvers: &graph.Resolver{TaskService: taskService},
+	}))
+	mux.Handle("POST /query", gqlSrv)
+	mux.Handle("GET /", playground.Handler("GraphQL Playground", "/query"))
+	log.Info("GraphQL playground available at /")
 
 	core := taskshttp.InstanceIDMiddleware(instanceID, mux)
 	httpHandler := middleware.Metrics(middleware.RequestID(middleware.AccessLog(log, zap.String("instance_id", instanceID))(core)))

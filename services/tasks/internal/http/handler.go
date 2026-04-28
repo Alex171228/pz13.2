@@ -205,6 +205,43 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, tasks)
 }
 
+func AuthMiddlewareFunc(verifier authclient.AuthVerifier, log *zap.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "missing authorization header"})
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid authorization format"})
+			return
+		}
+
+		resp, err := verifier.Verify(r.Context(), parts[1])
+		if err != nil {
+			log.Error("auth service unavailable", zap.Error(err))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "auth service unavailable"})
+			return
+		}
+		if !resp.Valid {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid token"})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Instance-ID", h.instanceID)

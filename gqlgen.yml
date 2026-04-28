@@ -1,0 +1,18 @@
+schema:
+  - services/tasks/graph/*.graphqls
+
+exec:
+  filename: services/tasks/graph/generated.go
+  package: graph
+
+model:
+  filename: services/tasks/graph/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: services/tasks/graph
+  package: graph
+  filename_template: "{name}.resolvers.go"
+
+autobind: []
