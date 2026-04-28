@@ -188,8 +188,8 @@ mutation Create($input: CreateTaskInput!) {
 ```json
 {
   "input": {
-    "title": "Изучить GraphQL",
-    "description": "Практическое занятие №11"
+    "title": "Тестовая задача 2",
+    "description": "Проверка GraphQL"
   }
 }
 ```
