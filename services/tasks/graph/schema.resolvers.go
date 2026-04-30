@@ -7,6 +7,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 
 	"pz1.2/services/tasks/graph/model"
 	"pz1.2/services/tasks/internal/service"
@@ -94,7 +95,7 @@ func (r *queryResolver) Tasks(ctx context.Context) ([]*model.Task, error) {
 func (r *queryResolver) Task(ctx context.Context, id string) (*model.Task, error) {
 	task, err := r.TaskService.GetByID(ctx, id)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("task not found: %s", id)
 	}
 	return toGQLTask(task), nil
 }
