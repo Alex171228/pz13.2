@@ -137,6 +137,12 @@ curl -s -X PATCH http://localhost:8082/v1/tasks/t_a1b2c3d4 \
   -d '{"done":true}'
 ```
 
+![REST — получение списка задач](docs/images/pz12_rest_list.png)
+
+![REST — детали задачи](docs/images/pz12_rest_detail.png)
+
+![REST — создание задачи](docs/images/pz12_rest_create.png)
+
 ---
 
 ## 4. GraphQL-вариант
@@ -277,6 +283,12 @@ mutation Update($id: ID!, $input: UpdateTaskInput!) {
 }
 ```
 
+![GraphQL — список задач](docs/images/pz12_gql_list.png)
+
+![GraphQL — детали задачи](docs/images/pz12_gql_detail.png)
+
+![GraphQL — создание задачи](docs/images/pz12_gql_create.png)
+
 ---
 
 ## 5. Сравнение количества запросов
@@ -330,15 +342,9 @@ mutation Update($id: ID!, $input: UpdateTaskInput!) {
 
 В REST для списка задач сервер возвращает 6 полей на объект, хотя экран использует только 3. В GraphQL клиент запрашивает только необходимые поля, поэтому ответ точнее соответствует потребности интерфейса. При увеличении количества задач или полей разница будет расти.
 
-### Скриншоты: over-fetching
+![REST — список задач, все 6 полей](docs/images/pz12_rest_list.png)
 
-**REST — список задач (все 6 полей):**
-
-![REST список задач](docs/images/pz12_rest_list.png)
-
-**GraphQL — список задач (только 3 поля: id, title, done):**
-
-![GraphQL список задач](docs/images/pz12_gql_list.png)
+![GraphQL — список задач, только 3 поля](docs/images/pz12_gql_list.png)
 
 ---
 
@@ -378,15 +384,9 @@ HTTP/1.1 200 OK
 
 Даже при ошибке GraphQL возвращает HTTP 200. Информация об ошибке находится в поле `errors` внутри JSON-ответа. Это требует от клиента дополнительной логики для разбора ошибок и усложняет мониторинг на уровне HTTP.
 
-### Скриншоты: обработка ошибок
+![REST — ошибка 404](docs/images/pz12_rest_error.png)
 
-**REST — ошибка 404:**
-
-![REST ошибка 404](docs/images/pz12_rest_error.png)
-
-**GraphQL — ошибка (поле errors):**
-
-![GraphQL ошибка](docs/images/pz12_gql_error.png)
+![GraphQL — ошибка, поле errors](docs/images/pz12_gql_error.png)
 
 ### Запрос без авторизации
 
@@ -526,33 +526,3 @@ go run ./services/tasks/cmd/tasks
 - GraphQL Playground: `http://localhost:8082/`
 - GraphQL endpoint: `POST http://localhost:8082/query`
 
----
-
-## Скриншоты
-
-### REST API (через Postman или curl)
-
-| # | Скриншот | Файл |
-|---|----------|------|
-| 1 | Список задач (`GET /v1/tasks`) | `docs/images/pz12_rest_list.png` |
-| 2 | Детали задачи (`GET /v1/tasks/{id}`) | `docs/images/pz12_rest_detail.png` |
-| 3 | Создание задачи (`POST /v1/tasks`) | `docs/images/pz12_rest_create.png` |
-| 4 | Ошибка 404 (`GET /v1/tasks/unknown`) | `docs/images/pz12_rest_error.png` |
-
-### GraphQL API (через Playground)
-
-| # | Скриншот | Файл |
-|---|----------|------|
-| 5 | Список задач (только id, title, done) | `docs/images/pz12_gql_list.png` |
-| 6 | Детали задачи (id, title, description, done) | `docs/images/pz12_gql_detail.png` |
-| 7 | Создание задачи (mutation) | `docs/images/pz12_gql_create.png` |
-| 8 | Ошибка — несуществующая задача (поле errors) | `docs/images/pz12_gql_error.png` |
-
-![REST список задач](docs/images/pz12_rest_list.png)
-![REST детали задачи](docs/images/pz12_rest_detail.png)
-![REST создание задачи](docs/images/pz12_rest_create.png)
-![REST ошибка 404](docs/images/pz12_rest_error.png)
-![GraphQL список задач](docs/images/pz12_gql_list.png)
-![GraphQL детали задачи](docs/images/pz12_gql_detail.png)
-![GraphQL создание задачи](docs/images/pz12_gql_create.png)
-![GraphQL ошибка](docs/images/pz12_gql_error.png)
