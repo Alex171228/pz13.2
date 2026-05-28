@@ -461,8 +461,6 @@ task event received event=task.created task_id=t_a1b2c3d4 ts=2026-05-18T12:00:00
 - количество сообщений в очереди;
 - статистику обработки.
 
-Место для скриншота RabbitMQ UI:
-
 <img width="1633" height="654" alt="image" src="https://github.com/user-attachments/assets/80e9058c-8a05-464a-b55f-eb16372c5d84" />
 
 
