@@ -61,11 +61,7 @@ docker compose ps
 - веб-интерфейс RabbitMQ Management UI: [http://localhost:15672](http://localhost:15672);
 - логин и пароль: `guest / guest`.
 
-Место для скриншота:
-
-```md
-![RabbitMQ docker compose](docs/images/pz13_rabbit_compose.png)
-```
+<img width="1722" height="169" alt="image" src="https://github.com/user-attachments/assets/b2c320fe-edc9-4005-b5d0-568320287322" /> 
 
 ---
 
@@ -439,11 +435,7 @@ connected to rabbitmq
 - событие `task.created` публикуется в очередь `task_events`;
 - сервис `worker` получает сообщение и фиксирует его в логах.
 
-Место для скриншота HTTP-запроса:
-
-```md
-![Create task](docs/images/pz13_create_task.png)
-```
+<img width="1063" height="736" alt="image" src="https://github.com/user-attachments/assets/9fdc9464-a6e0-40db-af3d-06950e5d6f72" /> 
 
 ### Логи worker
 
@@ -455,11 +447,8 @@ connected to rabbitmq
 task event received event=task.created task_id=t_a1b2c3d4 ts=2026-05-18T12:00:00Z request_id=pz13-001 producer=tasks version=v1
 ```
 
-Место для скриншота логов worker:
+<img width="1713" height="95" alt="image" src="https://github.com/user-attachments/assets/018c9496-6ed6-40e3-9fb9-bba11f710aa2" /> 
 
-```md
-![Worker log](docs/images/pz13_worker_log.png)
-```
 
 ### Проверка через RabbitMQ Management UI
 
@@ -474,27 +463,8 @@ task event received event=task.created task_id=t_a1b2c3d4 ts=2026-05-18T12:00:00
 
 Место для скриншота RabbitMQ UI:
 
-```md
-![RabbitMQ queue](docs/images/pz13_rabbit_queue.png)
-```
+<img width="1633" height="654" alt="image" src="https://github.com/user-attachments/assets/80e9058c-8a05-464a-b55f-eb16372c5d84" />
 
-### Проверка Redis в логах `tasks`
-
-Redis не является основной частью задания, однако в локальном запуске проекта сервис `tasks` использует кеш. При успешном старте в логах должно быть:
-
-```text
-connected to redis
-```
-
-При повторном чтении одной и той же задачи могут появляться строки:
-
-```text
-cache miss
-cache set
-cache hit
-```
-
-Этот пункт можно использовать как дополнительную техническую проверку, но отдельный скриншот для отчёта по ПЗ13 не обязателен.
 
 ---
 
