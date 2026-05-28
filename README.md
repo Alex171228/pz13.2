@@ -1,528 +1,508 @@
-# Практическое занятие №12
+# Практическое задание 13
+##  ЭФМО-02-25
+## Тема
 
-## Сравнение REST и GraphQL: разработка одного и того же функционала двумя способами
-
----
-
-## 1. Сценарий сравнения
-
-Для корректного сравнения REST и GraphQL зафиксирован единый пользовательский сценарий на сущности **Task**:
-
-- **Экран списка задач** — отображаются поля `id`, `title`, `done`.
-- **Экран деталей задачи** — отображаются поля `id`, `title`, `description`, `done`.
-- **Действие** — создание новой задачи и обновление признака `done`.
-
-Оба API реализованы в одном сервисе `tasks` (порт 8082) и используют общий сервисный слой `TaskService` → `PostgresRepository` → одну и ту же базу данных PostgreSQL. Это обеспечивает честное сравнение: различия обусловлены только архитектурой API, а не разными данными или логикой.
+## Цель
 
 ---
 
-## 2. Архитектура проекта
+## Краткое описание реализованного решения
 
-```
-services/tasks/
-├── cmd/tasks/main.go            # Точка входа: REST + GraphQL в одном процессе
-├── internal/
-│   ├── http/handler.go          # REST-обработчики (/v1/tasks/...)
-│   ├── service/task.go          # Бизнес-логика (общая для REST и GraphQL)
-│   └── repository/postgres.go   # Работа с PostgreSQL
-└── graph/
-    ├── schema.graphqls          # GraphQL-схема
-    ├── schema.resolvers.go      # Резолверы (вызывают TaskService)
-    ├── resolver.go              # Корневой резолвер
-    ├── generated/               # Сгенерированный код gqlgen
-    └── model/                   # Модели GraphQL
-```
+В существующий проект интегрирован брокер сообщений RabbitMQ. После успешного создания задачи сервис `tasks` публикует событие `task.created` в очередь `task_events`. Отдельный сервис `worker` получает сообщение, декодирует JSON, выводит информацию о событии в лог и отправляет ручное подтверждение обработки через `Ack(false)`.
 
-Оба интерфейса обслуживаются одним HTTP-сервером:
+Публикация реализована в режиме **best effort**:
 
-| Интерфейс | Маршрут | Авторизация |
-|-----------|---------|-------------|
-| REST API | `/v1/tasks`, `/v1/tasks/{id}` | `Authorization: Bearer <token>` |
-| GraphQL API | `POST /query` | `Authorization: Bearer <token>` |
-| GraphQL Playground | `GET /` | Не требуется |
+- задача считается созданной после успешной записи в PostgreSQL;
+- ошибка публикации не приводит к откату создания задачи;
+- ошибка публикации фиксируется в логах сервиса `tasks`.
 
 ---
 
-## 3. REST-вариант
+## Используемые компоненты
 
-### Маршруты
+- `services/tasks` — сервис задач, публикующий события в RabbitMQ;
+- `services/worker` — отдельный consumer RabbitMQ;
+- `services/auth` — сервис авторизации для HTTP-запросов к `tasks`;
+- `Redis` — локальный кеш сервиса `tasks`;
+- локальная инфраструктура RabbitMQ через `docker-compose`.
 
-| Метод | URL | Описание |
-|-------|-----|----------|
-| `GET` | `/v1/tasks` | Получить список задач |
-| `GET` | `/v1/tasks/{id}` | Получить задачу по ID |
-| `POST` | `/v1/tasks` | Создать задачу |
-| `PATCH` | `/v1/tasks/{id}` | Обновить задачу |
-| `DELETE` | `/v1/tasks/{id}` | Удалить задачу |
+---
 
-### Примеры ответов
+## Запуск RabbitMQ
 
-**Список задач** (`GET /v1/tasks`):
+Для работы с RabbitMQ используется Docker-контейнер с management-интерфейсом.
 
-```json
-[
-  {
-    "id": "t_a1b2c3d4",
-    "title": "Первая задача",
-    "description": "Учебный пример",
-    "due_date": "",
-    "done": false,
-    "created_at": "2026-04-29T12:00:00Z"
-  },
-  {
-    "id": "t_e5f6a7b8",
-    "title": "Вторая задача",
-    "description": "Проверка API",
-    "due_date": "",
-    "done": true,
-    "created_at": "2026-04-29T12:05:00Z"
-  }
-]
+```yaml
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: pz13-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
 ```
 
-REST всегда возвращает **все поля** объекта, включая `description`, `due_date`, `created_at`, даже если экрану списка нужны только `id`, `title`, `done`.
-
-**Одна задача** (`GET /v1/tasks/t_a1b2c3d4`):
-
-```json
-{
-  "id": "t_a1b2c3d4",
-  "title": "Первая задача",
-  "description": "Учебный пример",
-  "due_date": "",
-  "done": false,
-  "created_at": "2026-04-29T12:00:00Z"
-}
-```
-
-### Примеры curl-запросов
-
-Получение токена:
+Запуск:
 
 ```bash
-curl -s -X POST http://localhost:8081/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"student","password":"student"}'
+cd deploy/rabbit
+docker compose up -d
+docker compose ps
 ```
 
-Список задач:
+После запуска доступны:
 
-```bash
-curl -s http://localhost:8082/v1/tasks \
-  -H "Authorization: Bearer <token>"
+- AMQP-порт `5672` для приложений;
+- веб-интерфейс RabbitMQ Management UI: [http://localhost:15672](http://localhost:15672);
+- логин и пароль: `guest / guest`.
+
+Место для скриншота:
+
+```md
+![RabbitMQ docker compose](docs/images/pz13_rabbit_compose.png)
 ```
-
-Одна задача:
-
-```bash
-curl -s http://localhost:8082/v1/tasks/t_a1b2c3d4 \
-  -H "Authorization: Bearer <token>"
-```
-
-Создание задачи:
-
-```bash
-curl -s -X POST http://localhost:8082/v1/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"title":"Сравнить REST и GraphQL","description":"Практическая работа №12"}'
-```
-
-Обновление задачи:
-
-```bash
-curl -s -X PATCH http://localhost:8082/v1/tasks/t_a1b2c3d4 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"done":true}'
-```
-
-![REST — получение списка задач](docs/images/pz12_rest_list.png)
-
-![REST — детали задачи](docs/images/pz12_rest_detail.png)
-
-![REST — создание задачи](docs/images/pz12_rest_create.png)
 
 ---
 
-## 4. GraphQL-вариант
+## Формат сообщения
 
-### Схема
-
-```graphql
-type Task {
-  id: ID!
-  title: String!
-  description: String
-  due_date: String
-  done: Boolean!
-  created_at: String
-}
-
-type Query {
-  tasks: [Task!]!
-  task(id: ID!): Task
-}
-
-type Mutation {
-  createTask(input: CreateTaskInput!): Task!
-  updateTask(id: ID!, input: UpdateTaskInput!): Task!
-  deleteTask(id: ID!): Boolean!
-}
-
-input CreateTaskInput {
-  title: String!
-  description: String
-  due_date: String
-}
-
-input UpdateTaskInput {
-  title: String
-  description: String
-  due_date: String
-  done: Boolean
-}
-```
-
-### Примеры запросов
-
-**Список задач** (только нужные поля для экрана списка):
-
-```graphql
-query {
-  tasks {
-    id
-    title
-    done
-  }
-}
-```
-
-Ответ:
+Сообщение публикуется в формате JSON и содержит обязательные поля события:
 
 ```json
 {
-  "data": {
-    "tasks": [
-      { "id": "t_a1b2c3d4", "title": "Первая задача", "done": false },
-      { "id": "t_e5f6a7b8", "title": "Вторая задача", "done": true }
-    ]
-  }
+  "event": "task.created",
+  "task_id": "t_a1b2c3d4",
+  "ts": "2026-05-18T12:00:00Z"
 }
 ```
 
-**Детали задачи**:
-
-```graphql
-query GetTask($id: ID!) {
-  task(id: $id) {
-    id
-    title
-    description
-    done
-  }
-}
-```
-
-Переменные:
-
-```json
-{ "id": "t_a1b2c3d4" }
-```
-
-**Создание задачи**:
-
-```graphql
-mutation Create($input: CreateTaskInput!) {
-  createTask(input: $input) {
-    id
-    title
-    description
-    done
-  }
-}
-```
-
-Переменные:
+В проекте также передаются дополнительные поля:
 
 ```json
 {
-  "input": {
-    "title": "Сравнить REST и GraphQL",
-    "description": "Практическая работа №12"
-  }
+  "event": "task.created",
+  "task_id": "t_a1b2c3d4",
+  "ts": "2026-05-18T12:00:00Z",
+  "request_id": "pz13-001",
+  "producer": "tasks",
+  "version": "v1"
 }
 ```
 
-**Обновление задачи**:
+Структура события:
 
-```graphql
-mutation Update($id: ID!, $input: UpdateTaskInput!) {
-  updateTask(id: $id, input: $input) {
-    id
-    title
-    done
-  }
+```go
+type TaskEvent struct {
+    Event     string `json:"event"`
+    TaskID    string `json:"task_id"`
+    TS        string `json:"ts"`
+    RequestID string `json:"request_id,omitempty"`
+    Producer  string `json:"producer,omitempty"`
+    Version   string `json:"version,omitempty"`
 }
 ```
 
-Переменные:
+Поле `event` определяет тип события.  
+Поле `task_id` хранит идентификатор созданной задачи.  
+Поле `ts` содержит временную метку события в формате UTC.
 
-```json
-{
-  "id": "t_a1b2c3d4",
-  "input": { "done": true }
-}
-```
-
-Для авторизации в Playground необходимо добавить HTTP-заголовок в нижней панели:
-
-```json
-{
-  "Authorization": "Bearer <token>"
-}
-```
-
-![GraphQL — список задач](docs/images/pz12_gql_list.png)
-
-![GraphQL — детали задачи](docs/images/pz12_gql_detail.png)
-
-![GraphQL — создание задачи](docs/images/pz12_gql_create.png)
+Сообщение публикуется с параметром `DeliveryMode: amqp.Persistent`, что повышает надёжность доставки при сбоях брокера.
 
 ---
 
-## 5. Сравнение количества запросов
+## Очередь `task_events`
 
-Сценарий: **список задач → открыть детали → обновить done**.
+Очередь `task_events` объявляется как `durable` и используется как publisher, так и consumer.
 
-| Шаг | REST | GraphQL |
-|-----|------|---------|
-| Получить список задач | `GET /v1/tasks` (1 запрос) | `query { tasks { ... } }` (1 запрос) |
-| Открыть детали задачи | `GET /v1/tasks/{id}` (1 запрос) | `query { task(id) { ... } }` (1 запрос) |
-| Обновить done | `PATCH /v1/tasks/{id}` (1 запрос) | `mutation { updateTask(...) { ... } }` (1 запрос) |
-| **Итого** | **3 запроса** | **3 запроса** |
+Фрагмент объявления очереди:
 
-В данном простом CRUD-сценарии количество сетевых обращений **одинаковое**. GraphQL не уменьшает число запросов автоматически — его преимущество проявляется в более сложных сценариях, например, когда нужно получить связанные сущности (задачи + авторы + комментарии) одним запросом вместо нескольких.
+```go
+_, err := ch.QueueDeclare(
+    queueName,
+    true,
+    false,
+    false,
+    false,
+    nil,
+)
+```
+
+Параметры объявления очереди:
+
+- `durable = true`
+- `autoDelete = false`
+- `exclusive = false`
+
+Это означает:
+
+- очередь сохраняется после перезапуска RabbitMQ;
+- очередь не удаляется автоматически;
+- очередь не привязана к одному клиентскому соединению.
 
 ---
 
-## 6. Сравнение объёма данных (over-fetching)
+## Producer: публикация события в сервисе `tasks`
 
-### Экран списка задач
+После успешного создания задачи сервис `tasks` публикует событие `task.created` в RabbitMQ.
 
-Клиенту нужны только поля: `id`, `title`, `done`.
+Публикация выполняется после сохранения задачи в базе данных. Таким образом событие отражает уже состоявшийся факт создания задачи.
 
-**REST** — `GET /v1/tasks` возвращает **все 6 полей** на каждый объект:
+**Выбранный режим обработки ошибок:** `best effort`
 
-```json
-{
-  "id": "t_a1b2c3d4",
-  "title": "Первая задача",
-  "description": "Учебный пример",
-  "due_date": "",
-  "done": false,
-  "created_at": "2026-04-29T12:00:00Z"
-}
-```
+- если RabbitMQ недоступен, создание задачи не отменяется;
+- при ошибке публикации клиент всё равно получает успешный ответ;
+- ошибка публикации только логируется.
 
-Лишние поля: `description`, `due_date`, `created_at` — это **over-fetching**.
+Логика публикации после успешного сохранения задачи:
 
-**GraphQL** — клиент запрашивает **ровно 3 поля**:
-
-```json
-{ "id": "t_a1b2c3d4", "title": "Первая задача", "done": false }
-```
-
-### Количественная оценка
-
-| Подход | Полей на объект | Примерный размер (2 задачи) |
-|--------|-----------------|-----------------------------|
-| REST | 6 полей | ~320 байт |
-| GraphQL | 3 поля | ~140 байт |
-
-В REST для списка задач сервер возвращает 6 полей на объект, хотя экран использует только 3. В GraphQL клиент запрашивает только необходимые поля, поэтому ответ точнее соответствует потребности интерфейса. При увеличении количества задач или полей разница будет расти.
-
-![REST — список задач, все 6 полей](docs/images/pz12_rest_list.png)
-
-![GraphQL — список задач, только 3 поля](docs/images/pz12_gql_list.png)
-
----
-
-## 7. Сравнение обработки ошибок
-
-### Запрос несуществующей задачи
-
-**REST** — `GET /v1/tasks/unknown`:
-
-```
-HTTP/1.1 404 Not Found
-
-{
-  "error": "task not found"
-}
-```
-
-Клиент определяет ошибку по HTTP-статусу 404. Это стандартный механизм HTTP, знакомый всем разработчикам, удобен для мониторинга и журналирования.
-
-**GraphQL** — `query { task(id: "unknown") { id title } }`:
-
-```
-HTTP/1.1 200 OK
-
-{
-  "data": {
-    "task": null
-  },
-  "errors": [
-    {
-      "message": "task not found: unknown",
-      "path": ["task"]
+```go
+func (s *TaskService) Create(ctx context.Context, req CreateTaskRequest) (*Task, error) {
+    task := &Task{
+        ID:          "t_" + uuid.New().String()[:8],
+        Title:       req.Title,
+        Description: req.Description,
+        DueDate:     req.DueDate,
+        Done:        false,
+        CreatedAt:   time.Now().Format(time.RFC3339),
     }
-  ]
+
+    if err := s.repo.Create(task); err != nil {
+        return nil, err
+    }
+
+    if s.publisher != nil {
+        if err := s.publisher.PublishTaskCreated(ctx, task.ID); err != nil {
+            s.log.Warn("task created but event publish failed",
+                zap.String("task_id", task.ID),
+                zap.Error(err),
+            )
+        }
+    }
+
+    return task, nil
 }
 ```
 
-Даже при ошибке GraphQL возвращает HTTP 200. Информация об ошибке находится в поле `errors` внутри JSON-ответа. Это требует от клиента дополнительной логики для разбора ошибок и усложняет мониторинг на уровне HTTP.
+**Фрагмент публикации:**
 
-![REST — ошибка 404](docs/images/pz12_rest_error.png)
+```go
+msg := events.TaskEvent{
+    Event:     "task.created",
+    TaskID:    taskID,
+    TS:        time.Now().UTC().Format(time.RFC3339),
+    RequestID: middleware.GetRequestID(ctx),
+    Producer:  p.producer,
+    Version:   p.version,
+}
 
-![GraphQL — ошибка, поле errors](docs/images/pz12_gql_error.png)
+body, err := json.Marshal(msg)
+if err != nil {
+    return fmt.Errorf("marshal event: %w", err)
+}
 
-### Запрос без авторизации
-
-**REST**:
-
+return ch.PublishWithContext(
+    ctx,
+    "",
+    p.queueName,
+    false,
+    false,
+    amqp091.Publishing{
+        ContentType:  "application/json",
+        DeliveryMode: amqp091.Persistent,
+        Timestamp:    time.Now().UTC(),
+        Body:         body,
+    },
+)
 ```
-HTTP/1.1 401 Unauthorized
 
-{ "error": "missing authorization header" }
+---
+
+## Consumer: отдельный сервис `worker`
+
+Для получения сообщений реализован отдельный сервис `worker`.
+
+Основные характеристики consumer:
+
+- очередь объявляется как `durable`;
+- используется ручное подтверждение обработки;
+- используется `prefetch = 1`;
+- при некорректном сообщении выполняется `Nack(false, false)`.
+
+**Фрагмент consumer:**
+
+```go
+msgs, err := ch.Consume(
+    c.queueName,
+    "",
+    false,
+    false,
+    false,
+    false,
+    nil,
+)
+
+for {
+    select {
+    case d, ok := <-msgs:
+        if !ok {
+            return fmt.Errorf("delivery channel closed")
+        }
+
+        var ev events.TaskEvent
+        if err := json.Unmarshal(d.Body, &ev); err != nil {
+            c.log.Warn("bad message", zap.Error(err))
+            d.Nack(false, false)
+            continue
+        }
+
+        c.log.Info("task event received", zap.String("event", ev.Event))
+        d.Ack(false)
+    }
+}
 ```
 
-**GraphQL**:
+---
 
+## Ручное подтверждение обработки (`ack`)
+
+В `worker` используется ручное подтверждение обработки сообщения.
+
+Это достигается за счёт параметра:
+
+```go
+autoAck = false
 ```
-HTTP/1.1 401 Unauthorized
 
-{ "error": "missing authorization header" }
+Сообщение подтверждается только после успешной обработки:
+
+```go
+if err := d.Ack(false); err != nil {
+    c.log.Warn("ack failed", zap.Error(err))
+}
 ```
 
-В данной реализации проверка авторизации выполняется на уровне HTTP-middleware до вызова GraphQL-резолвера, поэтому поведение идентично REST.
+Если сообщение не удаётся распарсить как JSON, оно отклоняется:
+
+```go
+_ = d.Nack(false, false)
+```
+
+Таким образом:
+
+- успешно обработанное сообщение удаляется из очереди;
+- невалидное сообщение не возвращается в очередь повторно.
 
 ---
 
-## 8. Сравнение документирования и тестирования
+## Использование prefetch
 
-| Критерий | REST | GraphQL |
-|----------|------|---------|
-| Точки входа | Несколько URL (`/v1/tasks`, `/v1/tasks/{id}`) | Один URL (`POST /query`) |
-| Методы | GET, POST, PATCH, DELETE | POST (всегда) |
-| Документация | Swagger/OpenAPI, README с curl | Самодокументируемая схема, Playground |
-| Интерактивное тестирование | Postman, curl | GraphQL Playground (встроен в сервис) |
-| Воспроизведение запросов | Просто: скопировать curl-команду | Нужно понимать синтаксис query/mutation |
-| Типизация | Не встроена (Swagger опционален) | Строгая типизация через схему |
+Для ограничения числа неподтвержденных сообщений используется настройка QoS:
 
-В учебном контексте REST оказался проще для документирования: каждый endpoint имеет отдельный URL и HTTP-метод, запросы легко воспроизводятся через curl. GraphQL предлагает встроенную документацию через Playground и строгую типизацию, но требует понимания специфического синтаксиса запросов.
+```go
+if err := ch.Qos(c.prefetch, 0, false); err != nil {
+    return fmt.Errorf("configure qos: %w", err)
+}
+```
 
----
+В проекте по умолчанию используется:
 
-## 9. Сравнение кэширования
+```text
+WORKER_PREFETCH=1
+```
 
-| Аспект | REST | GraphQL |
-|--------|------|---------|
-| HTTP-кэш | Легко: каждый URL = уникальный ключ кэша | Сложно: один URL `POST /query` для всех запросов |
-| CDN | Поддерживается из коробки для GET-запросов | Требует persisted queries или специальной настройки |
-| Серверный кэш | По URL + параметрам | По хешу запроса или на уровне резолверов |
-| Браузерный кэш | Стандартные заголовки Cache-Control | Не применим (POST-запросы не кэшируются браузером) |
-
-REST проще кэшировать стандартными средствами HTTP, потому что каждый ресурс имеет уникальный URL: `GET /v1/tasks/t_001` можно закэшировать по URL на любом уровне (браузер, CDN, прокси). В GraphQL все запросы идут на один `POST /query`, что делает стандартный HTTP-кэш неприменимым. Для кэширования GraphQL обычно используют дополнительные механизмы: persisted queries, нормализованный кэш на клиенте (Apollo Client), кэширование на уровне данных в резолверах.
-
-В данном проекте серверное кэширование реализовано через Redis на уровне `TaskService.GetByID` — оно работает одинаково для обоих API, поскольку оба используют один сервисный слой.
+Это означает, что RabbitMQ не будет отправлять worker больше одного неподтвержденного сообщения одновременно. Такое значение подходит для учебной демонстрации последовательной обработки сообщений.
 
 ---
 
-## 10. Итоговая сравнительная таблица
+## Переменные окружения
 
-| Критерий | REST | GraphQL |
-|----------|------|---------|
-| Структура API | Несколько endpoint | Один endpoint |
-| Выбор полей | Определяет сервер | Определяет клиент |
-| Избыточность ответа | Возможна (over-fetching) | Обычно ниже |
-| Обработка ошибок | Через HTTP-статусы (404, 400, 500) | Через поле `errors` (HTTP 200) |
-| Кэширование | Проще (по URL) | Сложнее (один endpoint) |
-| Простота внедрения | Выше | Ниже |
-| Гибкость для клиента | Ниже | Выше |
+### Для сервиса `tasks`
 
-### Вывод
+- `TASKS_PORT` — порт сервиса `tasks`, по умолчанию `8082`
+- `DATABASE_URL` — строка подключения к PostgreSQL
+- `AUTH_MODE` — режим проверки авторизации: `http` или `grpc`
+- `AUTH_BASE_URL` — адрес HTTP auth-сервиса
+- `AUTH_GRPC_ADDR` — адрес gRPC auth-сервиса
+- `REDIS_ADDR` — адрес Redis, по умолчанию `127.0.0.1:6379`
+- `RABBIT_URL` — адрес RabbitMQ, по умолчанию `amqp://guest:guest@localhost:5672/`
+- `QUEUE_NAME` — имя очереди, по умолчанию `task_events`
 
-Проведённое сравнение REST и GraphQL на одном и том же функционале сущности Task показало, что оба подхода успешно решают задачу CRUD-операций, но обладают разными сильными сторонами. В простом CRUD-сценарии количество сетевых запросов оказалось одинаковым — по три обращения в каждом случае. Главное преимущество GraphQL проявилось в точности выборки данных: для экрана списка клиент запросил только три необходимых поля вместо шести, что сокращает объём передаваемых данных. REST, в свою очередь, оказался проще в реализации, тестировании и документировании: каждый маршрут имеет понятный URL и HTTP-метод, запросы легко воспроизводятся через curl, а стандартные HTTP-статусы обеспечивают прозрачную обработку ошибок. GraphQL требует дополнительной инфраструктуры — схемы, резолверов, генератора кода — и усложняет кэширование и мониторинг. Для данного учебного CRUD-сервиса REST является более практичным решением благодаря простоте и предсказуемости. GraphQL целесообразно применять в проектах со сложными клиентскими интерфейсами, множеством экранов с разными наборами полей и необходимостью минимизировать сетевой трафик. Выбор между подходами должен определяться конкретным сценарием, а не абстрактными преимуществами технологии.
+### Для сервиса `worker`
 
----
-
-## Контрольные вопросы
-
-**1. В чём принципиальное отличие REST и GraphQL?**
-
-REST строится вокруг ресурсов с фиксированными endpoint и HTTP-методами: каждый URL представляет конкретный ресурс, а сервер определяет структуру ответа. GraphQL использует единый endpoint, а клиент сам формирует запрос и указывает, какие именно поля ему нужны.
-
-**2. Что такое over-fetching и under-fetching?**
-
-Over-fetching — клиент получает больше данных, чем ему нужно (например, REST возвращает все 6 полей задачи, хотя нужны только 3). Under-fetching — одного запроса недостаточно для получения всех нужных данных, и клиенту приходится делать дополнительные обращения к API.
-
-**3. Почему GraphQL позволяет клиенту точнее выбирать поля ответа?**
-
-Потому что клиент явно перечисляет нужные поля в теле запроса. Сервер возвращает ровно те данные, которые запрошены, и ничего лишнего. В REST структура ответа фиксирована на стороне сервера.
-
-**4. Почему REST проще кэшировать стандартными средствами HTTP?**
-
-Каждый REST-ресурс имеет уникальный URL, который может служить ключом кэша на любом уровне (браузер, CDN, прокси). GET-запросы кэшируются стандартными заголовками Cache-Control. В GraphQL все запросы идут на один endpoint через POST, что делает стандартный HTTP-кэш неприменимым.
-
-**5. Чем отличается обработка ошибок в REST и GraphQL?**
-
-В REST ошибки выражаются через HTTP-статусы (404, 400, 401, 500) — клиент сразу видит статус в заголовке ответа. В GraphQL даже при ошибке сервер часто возвращает HTTP 200, а информация об ошибке передаётся в поле `errors` внутри JSON-ответа, что требует дополнительной логики для разбора.
-
-**6. В каких случаях REST оказывается более практичным решением?**
-
-REST удобнее для простых CRUD-сервисов, внутренних API, административных панелей — там, где структура данных предсказуема, набор экранов невелик, а важны простота реализации, тестирования и мониторинга.
-
-**7. В каких случаях GraphQL может дать преимущества?**
-
-GraphQL выгоден при сложных клиентских интерфейсах с множеством экранов, мобильных приложениях с ограниченной пропускной способностью, системах с большим количеством связанных сущностей, где нужно получать разные наборы полей одним запросом.
-
-**8. Почему корректное сравнение REST и GraphQL нужно проводить на одном и том же сценарии?**
-
-Если сравнивать разные сущности, разные объёмы данных или разные бизнес-сценарии, вывод будет некорректным. Только при одинаковых условиях можно объективно оценить различия в архитектуре, а не в данных или логике.
-
-**9. Какие сложности возникают при сопровождении GraphQL API?**
-
-Необходимо поддерживать схему и резолверы, использовать кодогенерацию (gqlgen), организовывать кэширование без стандартного HTTP-кэша, настраивать мониторинг ошибок (HTTP 200 скрывает проблемы), обеспечивать защиту от сложных вложенных запросов (depth limiting).
-
-**10. Почему для учебных CRUD-сервисов REST часто оказывается проще?**
-
-Потому что REST не требует дополнительной инфраструктуры (схемы, генераторов, резолверов), опирается на стандартные механизмы HTTP, легко тестируется через curl/Postman, а для простых операций (список, детали, создание, обновление) количество запросов одинаковое — преимущества GraphQL в точности выборки не окупают затрат на внедрение.
+- `RABBIT_URL` — адрес RabbitMQ, по умолчанию `amqp://guest:guest@localhost:5672/`
+- `QUEUE_NAME` — имя очереди, по умолчанию `task_events`
+- `WORKER_PREFETCH` — значение `prefetch`, по умолчанию `1`
 
 ---
 
-## Запуск проекта
+## Демонстрация работы
 
-### Предварительные требования
+### Подготовка зависимостей
 
-- Go 1.25+
-- PostgreSQL (база `tasks`, пользователь `tasks`)
-- Redis (опционально, для кэширования)
+Перед запуском сервисов должны быть доступны:
 
-### Запуск сервисов
+- PostgreSQL на `5432`;
+- Redis на `6379`;
+- RabbitMQ на `5672` и `15672`.
+
+### Запуск auth-сервиса
 
 ```bash
-# Сервис авторизации (порт 8081)
 go run ./services/auth/cmd/auth
+```
 
-# Сервис задач — REST + GraphQL (порт 8082)
+### Запуск worker
+
+```bash
+$env:RABBIT_URL="amqp://guest:guest@localhost:5672/"
+$env:QUEUE_NAME="task_events"
+$env:WORKER_PREFETCH="1"
+go run ./services/worker/cmd/worker
+```
+
+### Запуск tasks
+
+```bash
+$env:RABBIT_URL="amqp://guest:guest@localhost:5672/"
+$env:QUEUE_NAME="task_events"
+$env:REDIS_ADDR="127.0.0.1:6379"
 go run ./services/tasks/cmd/tasks
 ```
 
-### Проверка
+После запуска в логах `tasks` должны появиться строки о подключении к PostgreSQL, Redis и RabbitMQ.
 
-- REST API: `http://localhost:8082/v1/tasks`
-- GraphQL Playground: `http://localhost:8082/`
-- GraphQL endpoint: `POST http://localhost:8082/query`
+Пример:
 
+```text
+connected to database
+connected to redis
+connected to rabbitmq
+```
+
+### Получение токена
+
+Для проверки удобно использовать Postman.
+
+Параметры запроса:
+
+- метод: `POST`
+- URL: `http://localhost:8081/v1/auth/login`
+- заголовок: `Content-Type: application/json`
+- тело:
+
+```json
+{
+  "username": "student",
+  "password": "student"
+}
+```
+
+Ожидаемый ответ:
+
+```json
+{
+  "access_token": "demo-token",
+  "token_type": "Bearer"
+}
+```
+
+### Создание задачи через REST API
+
+Для проверки также можно использовать Postman.
+
+Параметры запроса:
+
+- метод: `POST`
+- URL: `http://localhost:8082/v1/tasks`
+- заголовки:
+  - `Authorization: Bearer demo-token`
+  - `Content-Type: application/json`
+  - `X-Request-ID: pz13-001`
+- тело:
+
+```json
+{
+  "title": "RabbitMQ demo",
+  "description": "publish event"
+}
+```
+
+Ожидаемый результат:
+
+- сервис `tasks` возвращает `201 Created`;
+- задача сохраняется в PostgreSQL;
+- событие `task.created` публикуется в очередь `task_events`;
+- сервис `worker` получает сообщение и фиксирует его в логах.
+
+Место для скриншота HTTP-запроса:
+
+```md
+![Create task](docs/images/pz13_create_task.png)
+```
+
+### Логи worker
+
+В терминале `worker` должно появиться сообщение о полученном событии.
+
+Пример:
+
+```text
+task event received event=task.created task_id=t_a1b2c3d4 ts=2026-05-18T12:00:00Z request_id=pz13-001 producer=tasks version=v1
+```
+
+Место для скриншота логов worker:
+
+```md
+![Worker log](docs/images/pz13_worker_log.png)
+```
+
+### Проверка через RabbitMQ Management UI
+
+Открыть [http://localhost:15672](http://localhost:15672), войти под `guest / guest`, затем перейти в раздел `Queues and Streams` и открыть очередь `task_events`.
+
+На странице должно быть видно:
+
+- имя очереди;
+- наличие consumer;
+- количество сообщений в очереди;
+- статистику обработки.
+
+Место для скриншота RabbitMQ UI:
+
+```md
+![RabbitMQ queue](docs/images/pz13_rabbit_queue.png)
+```
+
+### Проверка Redis в логах `tasks`
+
+Redis не является основной частью задания, однако в локальном запуске проекта сервис `tasks` использует кеш. При успешном старте в логах должно быть:
+
+```text
+connected to redis
+```
+
+При повторном чтении одной и той же задачи могут появляться строки:
+
+```text
+cache miss
+cache set
+cache hit
+```
+
+Этот пункт можно использовать как дополнительную техническую проверку, но отдельный скриншот для отчёта по ПЗ13 не обязателен.
+
+---
+
+## Выводы
+
+- RabbitMQ успешно интегрирован в существующий проект.
+- Очередь `task_events` объявляется как `durable`.
+- Сервис `tasks` публикует событие `task.created` после успешного создания задачи.
+- Отдельный сервис `worker` получает сообщения из очереди с ручным подтверждением обработки.
+- Использование `prefetch = 1` ограничивает число неподтвержденных сообщений и демонстрирует последовательную обработку.
+- Реализован полный учебный сценарий прохождения сообщения от HTTP-запроса до обработки в consumer.

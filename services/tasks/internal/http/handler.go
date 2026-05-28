@@ -110,7 +110,7 @@ func (h *Handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskService.Create(req)
+	task, err := h.taskService.Create(r.Context(), req)
 	if err != nil {
 		l.Error("failed to create task", zap.Error(err))
 		h.respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

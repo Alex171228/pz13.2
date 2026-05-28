@@ -48,25 +48,31 @@ type TaskRepository interface {
 	SearchByTitle(title string) ([]*Task, error)
 }
 
+type TaskEventPublisher interface {
+	PublishTaskCreated(ctx context.Context, taskID string) error
+}
+
 type TaskService struct {
 	repo      TaskRepository
 	redis     *redis.Client
 	log       *zap.Logger
 	ttl       time.Duration
 	ttlJitter time.Duration
+	publisher TaskEventPublisher
 }
 
-func NewTaskService(repo TaskRepository, redisClient *redis.Client, log *zap.Logger, ttl, ttlJitter time.Duration) *TaskService {
+func NewTaskService(repo TaskRepository, redisClient *redis.Client, log *zap.Logger, ttl, ttlJitter time.Duration, publisher TaskEventPublisher) *TaskService {
 	return &TaskService{
 		repo:      repo,
 		redis:     redisClient,
 		log:       log,
 		ttl:       ttl,
 		ttlJitter: ttlJitter,
+		publisher: publisher,
 	}
 }
 
-func (s *TaskService) Create(req CreateTaskRequest) (*Task, error) {
+func (s *TaskService) Create(ctx context.Context, req CreateTaskRequest) (*Task, error) {
 	task := &Task{
 		ID:          "t_" + uuid.New().String()[:8],
 		Title:       req.Title,
@@ -78,6 +84,13 @@ func (s *TaskService) Create(req CreateTaskRequest) (*Task, error) {
 	if err := s.repo.Create(task); err != nil {
 		return nil, err
 	}
+
+	if s.publisher != nil {
+		if err := s.publisher.PublishTaskCreated(ctx, task.ID); err != nil {
+			s.log.Warn("task created but event publish failed", zap.String("task_id", task.ID), zap.Error(err))
+		}
+	}
+
 	return task, nil
 }
 

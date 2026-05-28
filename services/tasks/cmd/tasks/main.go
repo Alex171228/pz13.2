@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"pz1.2/services/tasks/graph"
+	tasksamqp "pz1.2/services/tasks/internal/amqp"
 	"pz1.2/services/tasks/internal/cache"
 	"pz1.2/services/tasks/internal/client/authclient"
 	taskshttp "pz1.2/services/tasks/internal/http"
@@ -82,7 +83,7 @@ func main() {
 
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+		redisAddr = "127.0.0.1:6379"
 	}
 
 	cacheTTL := 120 * time.Second
@@ -108,7 +109,20 @@ func main() {
 		log.Info("connected to redis", zap.String("addr", redisAddr))
 	}
 
-	taskService := service.NewTaskService(repo, redisClient, log, cacheTTL, cacheTTLJitter)
+	rabbitURL := os.Getenv("RABBIT_URL")
+	if rabbitURL == "" {
+		rabbitURL = "amqp://guest:guest@localhost:5672/"
+	}
+
+	queueName := os.Getenv("QUEUE_NAME")
+	if queueName == "" {
+		queueName = "task_events"
+	}
+
+	publisher := tasksamqp.NewPublisher(rabbitURL, queueName, "tasks", "v1", log)
+	defer publisher.Close()
+
+	taskService := service.NewTaskService(repo, redisClient, log, cacheTTL, cacheTTLJitter, publisher)
 
 	mux := http.NewServeMux()
 	handler := taskshttp.NewHandler(taskService, authVerifier, log, instanceID)

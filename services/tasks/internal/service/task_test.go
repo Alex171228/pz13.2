@@ -66,14 +66,14 @@ func (m *mockRepo) SearchByTitle(title string) ([]*Task, error) {
 
 func newTestService(repo *mockRepo) *TaskService {
 	log, _ := zap.NewDevelopment()
-	return NewTaskService(repo, nil, log, 120*time.Second, 30*time.Second)
+	return NewTaskService(repo, nil, log, 120*time.Second, 30*time.Second, nil)
 }
 
 func TestCreate(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	task, err := svc.Create(CreateTaskRequest{
+	task, err := svc.Create(context.Background(), CreateTaskRequest{
 		Title:       "Test Task",
 		Description: "Description",
 		DueDate:     "2026-12-31",
@@ -99,8 +99,8 @@ func TestGetAll(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	svc.Create(CreateTaskRequest{Title: "Task 1"})
-	svc.Create(CreateTaskRequest{Title: "Task 2"})
+	svc.Create(context.Background(), CreateTaskRequest{Title: "Task 1"})
+	svc.Create(context.Background(), CreateTaskRequest{Title: "Task 2"})
 
 	tasks, err := svc.GetAll()
 	if err != nil {
@@ -115,7 +115,7 @@ func TestGetByID(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	created, _ := svc.Create(CreateTaskRequest{Title: "Find Me"})
+	created, _ := svc.Create(context.Background(), CreateTaskRequest{Title: "Find Me"})
 
 	found, err := svc.GetByID(context.Background(), created.ID)
 	if err != nil {
@@ -140,7 +140,7 @@ func TestUpdate(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	created, _ := svc.Create(CreateTaskRequest{Title: "Original"})
+	created, _ := svc.Create(context.Background(), CreateTaskRequest{Title: "Original"})
 
 	newTitle := "Updated"
 	done := true
@@ -174,7 +174,7 @@ func TestDelete(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	created, _ := svc.Create(CreateTaskRequest{Title: "Delete Me"})
+	created, _ := svc.Create(context.Background(), CreateTaskRequest{Title: "Delete Me"})
 
 	err := svc.Delete(context.Background(), created.ID)
 	if err != nil {
@@ -199,9 +199,9 @@ func TestSearchByTitle(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	svc.Create(CreateTaskRequest{Title: "Alpha"})
-	svc.Create(CreateTaskRequest{Title: "Beta"})
-	svc.Create(CreateTaskRequest{Title: "Alpha"})
+	svc.Create(context.Background(), CreateTaskRequest{Title: "Alpha"})
+	svc.Create(context.Background(), CreateTaskRequest{Title: "Beta"})
+	svc.Create(context.Background(), CreateTaskRequest{Title: "Alpha"})
 
 	results, err := svc.SearchByTitle("Alpha")
 	if err != nil {
@@ -216,7 +216,7 @@ func TestUpdate_PartialFields(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 
-	created, _ := svc.Create(CreateTaskRequest{
+	created, _ := svc.Create(context.Background(), CreateTaskRequest{
 		Title:       "Original",
 		Description: "Desc",
 		DueDate:     "2026-01-01",

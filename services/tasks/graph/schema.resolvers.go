@@ -48,7 +48,7 @@ func (r *mutationResolver) CreateTask(ctx context.Context, input model.CreateTas
 		Description: derefStr(input.Description),
 		DueDate:     derefStr(input.DueDate),
 	}
-	task, err := r.TaskService.Create(req)
+	task, err := r.TaskService.Create(ctx, req)
 	if err != nil {
 		return nil, err
 	}
